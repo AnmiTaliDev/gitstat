@@ -1,0 +1,8 @@
+build/
+subprojects/
+.cache/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
