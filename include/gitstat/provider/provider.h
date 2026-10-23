@@ -10,10 +10,12 @@ typedef struct gitstat_provider {
     const char *name;
     gitstat_provider_type_t type;
     gitstat_error_t (*fetch_stats)(const struct gitstat_provider *self, const gitstat_config_t *cfg, gitstat_user_stats_t *out_stats);
+    gitstat_error_t (*fetch_repo_stats)(const struct gitstat_provider *self, const gitstat_config_t *cfg, const char *repo, gitstat_repository_t *out_repo);
     void *ctx;
 } gitstat_provider_t;
 
 [[nodiscard]] gitstat_provider_t gitstat_provider_create(gitstat_provider_type_t type);
 [[nodiscard]] gitstat_error_t gitstat_provider_fetch(const gitstat_provider_t *provider, const gitstat_config_t *cfg, gitstat_user_stats_t *out_stats);
+[[nodiscard]] gitstat_error_t gitstat_provider_fetch_repo(const gitstat_provider_t *provider, const gitstat_config_t *cfg, const char *repo, gitstat_repository_t *out_repo);
 
 #endif

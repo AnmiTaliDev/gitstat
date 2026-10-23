@@ -36,3 +36,22 @@ void gitstat_print_user_not_found(FILE *stream, const gitstat_theme_t *theme, co
         fprintf(stream, "User %s not found or API error.\n", user);
     }
 }
+
+void gitstat_print_repo_not_found(FILE *stream, const gitstat_theme_t *theme, const char *repo) {
+    if (stream == nullptr) {
+        return;
+    }
+    const char *r = (repo != nullptr && repo[0] != '\0') ? repo : "unknown";
+    if (theme != nullptr && theme->error[0] != '\0') {
+        fprintf(stream, "%sRepository %s%s%s%s not found or API error.%s\n",
+            theme->error,
+            theme->bold,
+            r,
+            theme->reset,
+            theme->error,
+            theme->reset
+        );
+    } else {
+        fprintf(stream, "Repository %s not found or API error.\n", r);
+    }
+}

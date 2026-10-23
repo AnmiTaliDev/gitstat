@@ -6,5 +6,6 @@
 
 void gitstat_print_error(FILE *stream, const gitstat_theme_t *theme, const char *fmt, ...);
 void gitstat_print_user_not_found(FILE *stream, const gitstat_theme_t *theme, const char *username);
+void gitstat_print_repo_not_found(FILE *stream, const gitstat_theme_t *theme, const char *repo);
 
 #endif

@@ -8,6 +8,7 @@
 
 typedef struct gitstat_config {
     char *username;
+    char *repo;
     gitstat_provider_type_t provider;
     char *github_token;
     char *gitlab_token;

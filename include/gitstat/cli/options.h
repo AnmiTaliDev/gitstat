@@ -7,6 +7,7 @@
 
 typedef struct gitstat_cli_options {
     char *username;
+    char *repo;
     char *provider_str;
     char *token;
     char *url;

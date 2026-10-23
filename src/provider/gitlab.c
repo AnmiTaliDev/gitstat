@@ -112,11 +112,142 @@ static gitstat_error_t gitlab_fetch_stats(const gitstat_provider_t *self, const 
     return GITSTAT_OK;
 }
 
+static char *gitlab_url_encode_path(const char *path) {
+    if (path == nullptr) return nullptr;
+    gitstat_buffer_t buf;
+    gitstat_buffer_init(&buf);
+    for (size_t i = 0; path[i] != '\0'; ++i) {
+        if (path[i] == '/') {
+            gitstat_buffer_append_str(&buf, "%2F");
+        } else {
+            gitstat_buffer_append_char(&buf, path[i]);
+        }
+    }
+    char *res = gitstat_strdup(buf.data ? buf.data : "");
+    gitstat_buffer_free(&buf);
+    return res;
+}
+
+static gitstat_error_t gitlab_fetch_repo_stats(const gitstat_provider_t *self, const gitstat_config_t *cfg, const char *repo, gitstat_repository_t *out_repo) {
+    (void)self;
+    if (cfg == nullptr || repo == nullptr || out_repo == nullptr) {
+        return GITSTAT_ERR_INVALID_ARG;
+    }
+
+    const char *base_url = "https://gitlab.com";
+    char base_buf[256] = {0};
+    if (cfg->gitlab_url != nullptr && cfg->gitlab_url[0] != '\0') {
+        const char *api_pos = strstr(cfg->gitlab_url, "/api");
+        if (api_pos != nullptr) {
+            size_t blen = (size_t)(api_pos - cfg->gitlab_url);
+            if (blen < sizeof(base_buf)) {
+                strncpy(base_buf, cfg->gitlab_url, blen);
+                base_buf[blen] = '\0';
+                base_url = base_buf;
+            }
+        } else {
+            base_url = cfg->gitlab_url;
+        }
+    }
+
+    char *enc_repo = gitlab_url_encode_path(repo);
+    if (enc_repo == nullptr) {
+        return GITSTAT_ERR_NOMEM;
+    }
+
+    char url[512];
+    snprintf(url, sizeof(url), "%s/api/v4/projects/%s", base_url, enc_repo);
+
+    gitstat_http_request_t req = {
+        .url = url,
+        .method = "GET",
+        .post_data = nullptr,
+        .token = cfg->gitlab_token,
+        .user_agent = "gitstat/1.0",
+        .timeout_seconds = cfg->timeout_seconds
+    };
+
+    gitstat_http_response_t res;
+    gitstat_http_response_init(&res);
+
+    gitstat_error_t err = gitstat_http_execute(&req, &res);
+    if (err != GITSTAT_OK || res.status_code != 200 || res.body.data == nullptr) {
+        gitstat_error_t result = (res.status_code == 404) ? GITSTAT_ERR_NOT_FOUND : GITSTAT_ERR_HTTP;
+        gitstat_http_response_free(&res);
+        gitstat_free(enc_repo);
+        return result;
+    }
+
+    json_value_t *root = json_parse(res.body.data, res.body.size, &err);
+    gitstat_http_response_free(&res);
+    if (root == nullptr) {
+        gitstat_free(enc_repo);
+        return GITSTAT_ERR_JSON_PARSE;
+    }
+
+    const char *name = json_object_get_string(root, "name");
+    const char *path_ns = json_object_get_string(root, "path_with_namespace");
+    const char *desc = json_object_get_string(root, "description");
+    const char *web_url = json_object_get_string(root, "web_url");
+    const char *def_branch = json_object_get_string(root, "default_branch");
+    const char *updated = json_object_get_string(root, "last_activity_at");
+    const char *vis = json_object_get_string(root, "visibility");
+
+    out_repo->name = gitstat_strdup(name ? name : "");
+    out_repo->full_name = gitstat_strdup(path_ns ? path_ns : (name ? name : ""));
+    out_repo->description = gitstat_strdup(desc ? desc : "No description provided.");
+    out_repo->url = gitstat_strdup(web_url ? web_url : "");
+    out_repo->default_branch = gitstat_strdup(def_branch ? def_branch : "");
+
+    char date_buf[64] = {0};
+    if (updated != nullptr) {
+        gitstat_time_format_iso_to_date(updated, date_buf, sizeof(date_buf));
+    }
+    out_repo->updated_at = gitstat_strdup(date_buf);
+
+    out_repo->stars_count = json_object_get_int64(root, "star_count");
+    out_repo->forks_count = json_object_get_int64(root, "forks_count");
+    out_repo->open_issues_count = json_object_get_int64(root, "open_issues_count");
+    out_repo->is_private = (vis != nullptr && strcmp(vis, "private") == 0);
+    out_repo->is_fork = (json_object_get(root, "forked_from_project") != nullptr);
+
+    json_value_t *ns_obj = json_object_get(root, "namespace");
+    if (ns_obj != nullptr) {
+        const char *ns_path = json_object_get_string(ns_obj, "full_path");
+        if (ns_path == nullptr) {
+            ns_path = json_object_get_string(ns_obj, "path");
+        }
+        out_repo->owner = gitstat_strdup(ns_path ? ns_path : "");
+    }
+
+    json_value_free(root);
+
+    snprintf(url, sizeof(url), "%s/api/v4/projects/%s/languages", base_url, enc_repo);
+    gitstat_free(enc_repo);
+    req.url = url;
+    gitstat_http_response_init(&res);
+
+    err = gitstat_http_execute(&req, &res);
+    if (err == GITSTAT_OK && res.status_code == 200 && res.body.data != nullptr) {
+        json_value_t *lang_root = json_parse(res.body.data, res.body.size, &err);
+        if (lang_root != nullptr) {
+            if (json_get_type(lang_root) == JSON_TYPE_OBJECT && lang_root->as.object_value.head != nullptr) {
+                out_repo->language = gitstat_strdup(lang_root->as.object_value.head->key);
+            }
+            json_value_free(lang_root);
+        }
+    }
+    gitstat_http_response_free(&res);
+
+    return GITSTAT_OK;
+}
+
 gitstat_provider_t gitstat_provider_gitlab_create(void) {
     return (gitstat_provider_t){
         .name = "gitlab",
         .type = GITSTAT_PROVIDER_GITLAB,
         .fetch_stats = gitlab_fetch_stats,
+        .fetch_repo_stats = gitlab_fetch_repo_stats,
         .ctx = nullptr
     };
 }

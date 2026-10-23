@@ -11,6 +11,7 @@ void gitstat_cli_options_init(gitstat_cli_options_t *opts) {
         return;
     }
     opts->username = nullptr;
+    opts->repo = nullptr;
     opts->provider_str = nullptr;
     opts->token = nullptr;
     opts->url = nullptr;
@@ -27,11 +28,13 @@ void gitstat_cli_options_free(gitstat_cli_options_t *opts) {
         return;
     }
     gitstat_free(opts->username);
+    gitstat_free(opts->repo);
     gitstat_free(opts->provider_str);
     gitstat_free(opts->token);
     gitstat_free(opts->url);
     gitstat_free(opts->config_file);
     opts->username = nullptr;
+    opts->repo = nullptr;
     opts->provider_str = nullptr;
     opts->token = nullptr;
     opts->url = nullptr;
@@ -44,9 +47,10 @@ void gitstat_cli_print_version(void) {
 
 void gitstat_cli_print_help(const char *prog_name) {
     const char *name = (prog_name != nullptr && prog_name[0] != '\0') ? prog_name : "gitstat";
-    printf("Usage: %s [OPTIONS] [USERNAME]\n\n", name);
+    printf("Usage: %s [OPTIONS] [USERNAME | OWNER/REPO]\n\n", name);
     printf("Options:\n");
     printf("  -u, --user <name>       Target user login\n");
+    printf("  -r, --repo <owner/repo> Target repository\n");
     printf("  -p, --provider <name>   Provider: github or gitlab\n");
     printf("  -t, --token <token>     API authentication token\n");
     printf("      --url <url>         API endpoint URL\n");
@@ -83,6 +87,14 @@ gitstat_error_t gitstat_cli_parse(int argc, char **argv, gitstat_cli_options_t *
             if (i + 1 < argc) {
                 gitstat_free(opts->username);
                 opts->username = gitstat_strdup(argv[++i]);
+            }
+            continue;
+        }
+
+        if (strcmp(arg, "-r") == 0 || strcmp(arg, "--repo") == 0) {
+            if (i + 1 < argc) {
+                gitstat_free(opts->repo);
+                opts->repo = gitstat_strdup(argv[++i]);
             }
             continue;
         }
@@ -141,8 +153,14 @@ gitstat_error_t gitstat_cli_parse(int argc, char **argv, gitstat_cli_options_t *
         }
 
         if (arg[0] != '-') {
-            if (opts->username == nullptr) {
-                opts->username = gitstat_strdup(arg);
+            if (strchr(arg, '/') != nullptr) {
+                if (opts->repo == nullptr) {
+                    opts->repo = gitstat_strdup(arg);
+                }
+            } else {
+                if (opts->username == nullptr) {
+                    opts->username = gitstat_strdup(arg);
+                }
             }
         }
     }

@@ -15,3 +15,10 @@ gitstat_error_t gitstat_provider_fetch(const gitstat_provider_t *provider, const
     }
     return provider->fetch_stats(provider, cfg, out_stats);
 }
+
+gitstat_error_t gitstat_provider_fetch_repo(const gitstat_provider_t *provider, const gitstat_config_t *cfg, const char *repo, gitstat_repository_t *out_repo) {
+    if (provider == nullptr || provider->fetch_repo_stats == nullptr || cfg == nullptr || repo == nullptr || out_repo == nullptr) {
+        return GITSTAT_ERR_INVALID_ARG;
+    }
+    return provider->fetch_repo_stats(provider, cfg, repo, out_repo);
+}

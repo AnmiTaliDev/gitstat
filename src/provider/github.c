@@ -263,11 +263,99 @@ static gitstat_error_t github_fetch_stats(const gitstat_provider_t *self, const 
     return err;
 }
 
+static gitstat_error_t github_fetch_repo_stats(const gitstat_provider_t *self, const gitstat_config_t *cfg, const char *repo, gitstat_repository_t *out_repo) {
+    (void)self;
+    if (cfg == nullptr || repo == nullptr || out_repo == nullptr) {
+        return GITSTAT_ERR_INVALID_ARG;
+    }
+
+    char *token = detect_github_token(cfg);
+    char url[512];
+    snprintf(url, sizeof(url), "https://api.github.com/repos/%s", repo);
+
+    gitstat_http_request_t req = {
+        .url = url,
+        .method = "GET",
+        .post_data = nullptr,
+        .token = token,
+        .user_agent = "gitstat/1.0",
+        .timeout_seconds = cfg->timeout_seconds
+    };
+
+    gitstat_http_response_t res;
+    gitstat_http_response_init(&res);
+
+    gitstat_error_t err = gitstat_http_execute(&req, &res);
+    gitstat_free(token);
+
+    if (err != GITSTAT_OK || res.status_code != 200 || res.body.data == nullptr) {
+        gitstat_error_t result = (res.status_code == 404) ? GITSTAT_ERR_NOT_FOUND : GITSTAT_ERR_HTTP;
+        gitstat_http_response_free(&res);
+        return result;
+    }
+
+    json_value_t *root = json_parse(res.body.data, res.body.size, &err);
+    gitstat_http_response_free(&res);
+    if (root == nullptr) {
+        return GITSTAT_ERR_JSON_PARSE;
+    }
+
+    const char *name = json_object_get_string(root, "name");
+    const char *full_name = json_object_get_string(root, "full_name");
+    const char *desc = json_object_get_string(root, "description");
+    const char *html_url = json_object_get_string(root, "html_url");
+    const char *lang = json_object_get_string(root, "language");
+    const char *def_branch = json_object_get_string(root, "default_branch");
+    const char *updated = json_object_get_string(root, "updated_at");
+
+    out_repo->name = gitstat_strdup(name ? name : "");
+    out_repo->full_name = gitstat_strdup(full_name ? full_name : "");
+    out_repo->description = gitstat_strdup(desc ? desc : "No description provided.");
+    out_repo->url = gitstat_strdup(html_url ? html_url : "");
+    out_repo->language = gitstat_strdup(lang ? lang : "");
+    out_repo->default_branch = gitstat_strdup(def_branch ? def_branch : "");
+
+    char date_buf[64] = {0};
+    if (updated != nullptr) {
+        gitstat_time_format_iso_to_date(updated, date_buf, sizeof(date_buf));
+    }
+    out_repo->updated_at = gitstat_strdup(date_buf);
+
+    out_repo->stars_count = json_object_get_int64(root, "stargazers_count");
+    out_repo->forks_count = json_object_get_int64(root, "forks_count");
+    out_repo->open_issues_count = json_object_get_int64(root, "open_issues_count");
+    int64_t subscribers = json_object_get_int64(root, "subscribers_count");
+    out_repo->watchers_count = subscribers > 0 ? subscribers : json_object_get_int64(root, "watchers_count");
+    out_repo->is_fork = json_object_get_bool(root, "fork");
+    out_repo->is_private = json_object_get_bool(root, "private");
+
+    json_value_t *owner_obj = json_object_get(root, "owner");
+    if (owner_obj != nullptr) {
+        const char *owner_login = json_object_get_string(owner_obj, "login");
+        out_repo->owner = gitstat_strdup(owner_login ? owner_login : "");
+    }
+
+    json_value_t *license_obj = json_object_get(root, "license");
+    if (license_obj != nullptr && !json_is_null(license_obj)) {
+        const char *spdx = json_object_get_string(license_obj, "spdx_id");
+        const char *lic_name = json_object_get_string(license_obj, "name");
+        if (spdx != nullptr && spdx[0] != '\0' && strcmp(spdx, "NOASSERTION") != 0) {
+            out_repo->license = gitstat_strdup(spdx);
+        } else if (lic_name != nullptr && lic_name[0] != '\0') {
+            out_repo->license = gitstat_strdup(lic_name);
+        }
+    }
+
+    json_value_free(root);
+    return GITSTAT_OK;
+}
+
 gitstat_provider_t gitstat_provider_github_create(void) {
     return (gitstat_provider_t){
         .name = "github",
         .type = GITSTAT_PROVIDER_GITHUB,
         .fetch_stats = github_fetch_stats,
+        .fetch_repo_stats = github_fetch_repo_stats,
         .ctx = nullptr
     };
 }

@@ -13,6 +13,7 @@ void gitstat_config_init(gitstat_config_t *cfg) {
         return;
     }
     cfg->username = nullptr;
+    cfg->repo = nullptr;
     cfg->provider = GITSTAT_PROVIDER_GITHUB;
     cfg->github_token = nullptr;
     cfg->gitlab_token = nullptr;
@@ -34,11 +35,13 @@ void gitstat_config_free(gitstat_config_t *cfg) {
         return;
     }
     gitstat_free(cfg->username);
+    gitstat_free(cfg->repo);
     gitstat_free(cfg->github_token);
     gitstat_free(cfg->gitlab_token);
     gitstat_free(cfg->github_url);
     gitstat_free(cfg->gitlab_url);
     cfg->username = nullptr;
+    cfg->repo = nullptr;
     cfg->github_token = nullptr;
     cfg->gitlab_token = nullptr;
     cfg->github_url = nullptr;
@@ -75,6 +78,9 @@ static void ini_config_callback(void *user_data, const char *section, const char
         } else if (strcmp(key, "user") == 0 || strcmp(key, "username") == 0) {
             gitstat_free(cfg->username);
             cfg->username = gitstat_strdup(value);
+        } else if (strcmp(key, "repo") == 0 || strcmp(key, "repository") == 0) {
+            gitstat_free(cfg->repo);
+            cfg->repo = gitstat_strdup(value);
         } else if (strcmp(key, "color") == 0) {
             if (gitstat_str_equals_ignore_case(value, "always")) {
                 cfg->color_mode = GITSTAT_COLOR_ALWAYS;

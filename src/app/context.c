@@ -89,6 +89,11 @@ gitstat_error_t gitstat_context_bootstrap(gitstat_context_t *ctx, int argc, char
         ctx->config.repo_limit = (size_t)ctx->cli.repo_limit;
     }
 
+    if (ctx->cli.repo != nullptr && ctx->cli.repo[0] != '\0') {
+        gitstat_free(ctx->config.repo);
+        ctx->config.repo = gitstat_strdup(ctx->cli.repo);
+    }
+
     if (ctx->cli.color_mode != GITSTAT_COLOR_AUTO) {
         ctx->config.color_mode = ctx->cli.color_mode;
     }

@@ -23,11 +23,12 @@ The resulting executable is located at `build/gitstat`.
 ## Usage
 
 ```sh
-./build/gitstat [OPTIONS] [USERNAME]
+./build/gitstat [OPTIONS] [USERNAME | OWNER/REPO]
 ```
 
 Options:
 - `-u, --user <name>`: Target user login
+- `-r, --repo <owner/repo>`: Target repository
 - `-p, --provider <name>`: Provider (`github` or `gitlab`)
 - `-t, --token <token>`: API authentication token
 - `--url <url>`: API endpoint URL

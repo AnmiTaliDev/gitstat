@@ -24,6 +24,45 @@ int gitstat_app_run(gitstat_context_t *ctx) {
 
     gitstat_theme_t theme = gitstat_theme_get(ctx->use_color);
 
+    if (ctx->config.repo != nullptr && ctx->config.repo[0] != '\0') {
+        gitstat_error_t err = gitstat_http_global_init();
+        if (err != GITSTAT_OK) {
+            gitstat_print_error(stderr, &theme, "Error: Failed to initialize HTTP subsystem (%s).", gitstat_error_to_string(err));
+            return 1;
+        }
+
+        gitstat_provider_t provider = gitstat_provider_create(ctx->config.provider);
+        gitstat_repository_t repo_stats;
+        gitstat_repository_init(&repo_stats);
+
+        err = gitstat_provider_fetch_repo(&provider, &ctx->config, ctx->config.repo, &repo_stats);
+        if (err != GITSTAT_OK) {
+            gitstat_print_repo_not_found(stdout, &theme, ctx->config.repo);
+            gitstat_repository_free(&repo_stats);
+            gitstat_http_global_cleanup();
+            return 1;
+        }
+
+        gitstat_buffer_t output;
+        gitstat_buffer_init(&output);
+
+        if (ctx->cli.dump_json) {
+            err = gitstat_format_repo_stats_json(&repo_stats, &output);
+        } else {
+            err = gitstat_format_repo_stats(&repo_stats, &theme, &output);
+        }
+
+        if (err == GITSTAT_OK && output.data != nullptr) {
+            fputs(output.data, stdout);
+        }
+
+        gitstat_buffer_free(&output);
+        gitstat_repository_free(&repo_stats);
+        gitstat_http_global_cleanup();
+
+        return 0;
+    }
+
     if (ctx->config.username == nullptr || ctx->config.username[0] == '\0') {
         gitstat_print_error(stderr, &theme, "Error: No target username provided and none could be detected.");
         gitstat_cli_print_help("gitstat");
