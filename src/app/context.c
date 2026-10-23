@@ -36,6 +36,21 @@ static char *detect_git_user(void) {
     return nullptr;
 }
 
+static void add_context_target(gitstat_cli_options_t *opts, const char *val, bool is_repo) {
+    if (opts == nullptr || val == nullptr || val[0] == '\0') {
+        return;
+    }
+    gitstat_target_t *new_targets = (gitstat_target_t *)gitstat_realloc(
+        opts->targets, (opts->targets_count + 1) * sizeof(gitstat_target_t));
+    if (new_targets == nullptr) {
+        return;
+    }
+    opts->targets = new_targets;
+    opts->targets[opts->targets_count].value = gitstat_strdup(val);
+    opts->targets[opts->targets_count].is_repo = is_repo;
+    opts->targets_count++;
+}
+
 gitstat_error_t gitstat_context_bootstrap(gitstat_context_t *ctx, int argc, char **argv) {
     if (ctx == nullptr) {
         return GITSTAT_ERR_INVALID_ARG;
@@ -112,6 +127,14 @@ gitstat_error_t gitstat_context_bootstrap(gitstat_context_t *ctx, int argc, char
                 gitstat_free(ctx->config.username);
                 ctx->config.username = git_user;
             }
+        }
+    }
+
+    if (ctx->cli.targets_count == 0) {
+        if (ctx->config.repo != nullptr && ctx->config.repo[0] != '\0') {
+            add_context_target(&ctx->cli, ctx->config.repo, true);
+        } else if (ctx->config.username != nullptr && ctx->config.username[0] != '\0') {
+            add_context_target(&ctx->cli, ctx->config.username, false);
         }
     }
 
