@@ -109,6 +109,72 @@ static gitstat_error_t gitlab_fetch_stats(const gitstat_provider_t *self, const 
     }
     gitstat_http_response_free(&res);
 
+    snprintf(url, sizeof(url), "%s/api/v4/users/%lld/contributed_projects?order_by=updated_at&sort=desc&per_page=%zu",
+             base_url, (long long)user_id, cfg->repo_limit);
+
+    req.url = url;
+    gitstat_http_response_init(&res);
+
+    err = gitstat_http_execute(&req, &res);
+    if (err == GITSTAT_OK && res.status_code == 200 && res.body.data != nullptr) {
+        json_value_t *c_projects = json_parse(res.body.data, res.body.size, &err);
+        if (c_projects != nullptr && json_get_type(c_projects) == JSON_TYPE_ARRAY) {
+            size_t c_count = json_array_length(c_projects);
+            if (c_count > 0) {
+                out_stats->contributed_repos = (gitstat_repository_t *)gitstat_calloc(c_count, sizeof(gitstat_repository_t));
+                out_stats->contributed_repos_count = c_count;
+
+                for (size_t i = 0; i < c_count; ++i) {
+                    json_value_t *proj = json_array_get(c_projects, i);
+                    if (proj != nullptr) {
+                        gitstat_repository_init(&out_stats->contributed_repos[i]);
+                        const char *p_name = json_object_get_string(proj, "name");
+                        const char *p_full = json_object_get_string(proj, "path_with_namespace");
+                        const char *p_desc = json_object_get_string(proj, "description");
+                        const char *p_updated = json_object_get_string(proj, "last_activity_at");
+                        const char *p_url = json_object_get_string(proj, "web_url");
+
+                        out_stats->contributed_repos[i].name = gitstat_strdup(p_name ? p_name : "");
+                        out_stats->contributed_repos[i].full_name = gitstat_strdup(p_full ? p_full : (p_name ? p_name : ""));
+                        out_stats->contributed_repos[i].description = gitstat_strdup(p_desc ? p_desc : "No description provided.");
+
+                        char date_buf[64] = {0};
+                        if (p_updated != nullptr) {
+                            gitstat_time_format_iso_to_date(p_updated, date_buf, sizeof(date_buf));
+                        }
+                        out_stats->contributed_repos[i].updated_at = gitstat_strdup(date_buf);
+                        out_stats->contributed_repos[i].url = gitstat_strdup(p_url ? p_url : "");
+
+                        json_value_t *ns = json_object_get(proj, "namespace");
+                        if (ns != nullptr) {
+                            const char *kind = json_object_get_string(ns, "kind");
+                            const char *ns_path = json_object_get_string(ns, "full_path");
+                            if (kind != nullptr && strcmp(kind, "group") == 0 && ns_path != nullptr && ns_path[0] != '\0') {
+                                bool exists = false;
+                                for (size_t g = 0; g < out_stats->organizations_count; ++g) {
+                                    if (strcmp(out_stats->organizations[g], ns_path) == 0) {
+                                        exists = true;
+                                        break;
+                                    }
+                                }
+                                if (!exists) {
+                                    char **new_orgs = (char **)gitstat_realloc(out_stats->organizations, (out_stats->organizations_count + 1) * sizeof(char *));
+                                    if (new_orgs != nullptr) {
+                                        out_stats->organizations = new_orgs;
+                                        out_stats->organizations[out_stats->organizations_count] = gitstat_strdup(ns_path);
+                                        out_stats->organizations_count++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            json_value_free(c_projects);
+        }
+    }
+    gitstat_http_response_free(&res);
+
     return GITSTAT_OK;
 }
 

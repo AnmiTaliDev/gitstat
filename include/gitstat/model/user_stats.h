@@ -14,8 +14,12 @@ typedef struct gitstat_user_stats {
     int64_t total_pull_requests;
     int64_t restricted_contributions;
     int64_t public_repos_count;
+    char **organizations;
+    size_t organizations_count;
     gitstat_repository_t *recent_repos;
     size_t recent_repos_count;
+    gitstat_repository_t *contributed_repos;
+    size_t contributed_repos_count;
     bool has_contributions_data;
 } gitstat_user_stats_t;
 
