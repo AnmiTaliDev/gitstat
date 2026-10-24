@@ -29,15 +29,6 @@ static const char *GITHUB_GRAPHQL_QUERY =
 "        url"
 "      }"
 "    }"
-"    repositoriesContributedTo(first: $limit, contributionTypes: [COMMIT, PULL_REQUEST, REPOSITORY], orderBy: {field: PUSHED_AT, direction: DESC}) {"
-"      nodes {"
-"        name"
-"        nameWithOwner"
-"        description"
-"        updatedAt"
-"        url"
-"      }"
-"    }"
 "    publicRepositories: repositories(privacy: PUBLIC, ownerAffiliations: OWNER) {"
 "      totalCount"
 "    }"
@@ -48,6 +39,18 @@ static const char *GITHUB_GRAPHQL_QUERY =
 "      totalCommitContributions"
 "      totalPullRequestContributions"
 "      restrictedContributionsCount"
+"      commitContributionsByRepository(maxRepositories: 100) {"
+"        repository { name nameWithOwner description url }"
+"        contributions(first: 1, orderBy: {field: OCCURRED_AT, direction: DESC}) {"
+"          nodes { occurredAt }"
+"        }"
+"      }"
+"      pullRequestContributionsByRepository(maxRepositories: 100) {"
+"        repository { name nameWithOwner description url }"
+"        contributions(first: 1, orderBy: {direction: DESC}) {"
+"          nodes { occurredAt }"
+"        }"
+"      }"
 "    }"
 "  }"
 "}";
@@ -66,7 +69,86 @@ static char *detect_github_token(const gitstat_config_t *cfg) {
     return nullptr;
 }
 
-static gitstat_error_t parse_github_graphql_response(const char *json_str, gitstat_user_stats_t *out_stats) {
+static void add_contributed_repo(gitstat_repository_t *repos, size_t *count, json_value_t *entry) {
+    json_value_t *repo = json_object_get(entry, "repository");
+    json_value_t *nodes = json_object_get(json_object_get(entry, "contributions"), "nodes");
+    if (repo == nullptr || nodes == nullptr || json_array_length(nodes) == 0) {
+        return;
+    }
+    const char *occurred = json_object_get_string(json_array_get(nodes, 0), "occurredAt");
+    const char *full = json_object_get_string(repo, "nameWithOwner");
+    if (occurred == nullptr || full == nullptr) {
+        return;
+    }
+
+    for (size_t i = 0; i < *count; ++i) {
+        if (strcmp(repos[i].full_name, full) == 0) {
+            if (strcmp(occurred, repos[i].updated_at) > 0) {
+                gitstat_free(repos[i].updated_at);
+                repos[i].updated_at = gitstat_strdup(occurred);
+            }
+            return;
+        }
+    }
+
+    const char *name = json_object_get_string(repo, "name");
+    const char *desc = json_object_get_string(repo, "description");
+    const char *url = json_object_get_string(repo, "url");
+    gitstat_repository_t *slot = &repos[*count];
+    gitstat_repository_init(slot);
+    slot->name = gitstat_strdup(name ? name : "");
+    slot->full_name = gitstat_strdup(full);
+    slot->description = gitstat_strdup(desc ? desc : "No description provided.");
+    slot->updated_at = gitstat_strdup(occurred);
+    slot->url = gitstat_strdup(url ? url : "");
+    (*count)++;
+}
+
+static int compare_contributed_desc(const void *a, const void *b) {
+    const gitstat_repository_t *ra = a;
+    const gitstat_repository_t *rb = b;
+    return strcmp(rb->updated_at, ra->updated_at);
+}
+
+static void parse_contributed_repos(json_value_t *contrib, size_t limit, gitstat_user_stats_t *out_stats) {
+    json_value_t *commits = json_object_get(contrib, "commitContributionsByRepository");
+    json_value_t *prs = json_object_get(contrib, "pullRequestContributionsByRepository");
+    size_t commits_len = commits != nullptr ? json_array_length(commits) : 0;
+    size_t prs_len = prs != nullptr ? json_array_length(prs) : 0;
+    if (commits_len + prs_len == 0) {
+        return;
+    }
+
+    gitstat_repository_t *repos = (gitstat_repository_t *)gitstat_calloc(commits_len + prs_len, sizeof(gitstat_repository_t));
+    size_t count = 0;
+    for (size_t i = 0; i < commits_len; ++i) {
+        add_contributed_repo(repos, &count, json_array_get(commits, i));
+    }
+    for (size_t i = 0; i < prs_len; ++i) {
+        add_contributed_repo(repos, &count, json_array_get(prs, i));
+    }
+    if (count == 0) {
+        gitstat_free(repos);
+        return;
+    }
+
+    qsort(repos, count, sizeof(gitstat_repository_t), compare_contributed_desc);
+
+    size_t keep = (limit > 0 && limit < count) ? limit : count;
+    for (size_t i = keep; i < count; ++i) {
+        gitstat_repository_free(&repos[i]);
+    }
+    for (size_t i = 0; i < keep; ++i) {
+        char date_buf[64] = {0};
+        gitstat_time_format_iso_to_date(repos[i].updated_at, date_buf, sizeof(date_buf));
+        gitstat_free(repos[i].updated_at);
+        repos[i].updated_at = gitstat_strdup(date_buf);
+    }
+    out_stats->contributed_repos = repos;
+    out_stats->contributed_repos_count = keep;
+}
+
+static gitstat_error_t parse_github_graphql_response(const char *json_str, size_t repo_limit, gitstat_user_stats_t *out_stats) {
     gitstat_error_t err = GITSTAT_OK;
     json_value_t *root = json_parse(json_str, 0, &err);
     if (root == nullptr) {
@@ -122,40 +204,7 @@ static gitstat_error_t parse_github_graphql_response(const char *json_str, gitst
         out_stats->total_commits = json_object_get_int64(contrib, "totalCommitContributions");
         out_stats->total_pull_requests = json_object_get_int64(contrib, "totalPullRequestContributions");
         out_stats->restricted_contributions = json_object_get_int64(contrib, "restrictedContributionsCount");
-    }
-
-    json_value_t *contrib_repos = json_object_get(user, "repositoriesContributedTo");
-    if (contrib_repos != nullptr) {
-        json_value_t *c_nodes = json_object_get(contrib_repos, "nodes");
-        if (c_nodes != nullptr && json_get_type(c_nodes) == JSON_TYPE_ARRAY) {
-            size_t c_count = json_array_length(c_nodes);
-            if (c_count > 0) {
-                out_stats->contributed_repos = (gitstat_repository_t *)gitstat_calloc(c_count, sizeof(gitstat_repository_t));
-                out_stats->contributed_repos_count = c_count;
-                for (size_t i = 0; i < c_count; ++i) {
-                    json_value_t *node = json_array_get(c_nodes, i);
-                    if (node != nullptr) {
-                        gitstat_repository_init(&out_stats->contributed_repos[i]);
-                        const char *r_name = json_object_get_string(node, "name");
-                        const char *r_full = json_object_get_string(node, "nameWithOwner");
-                        const char *r_desc = json_object_get_string(node, "description");
-                        const char *r_updated = json_object_get_string(node, "updatedAt");
-                        const char *r_url = json_object_get_string(node, "url");
-
-                        out_stats->contributed_repos[i].name = gitstat_strdup(r_name ? r_name : "");
-                        out_stats->contributed_repos[i].full_name = gitstat_strdup(r_full ? r_full : (r_name ? r_name : ""));
-                        out_stats->contributed_repos[i].description = gitstat_strdup(r_desc ? r_desc : "No description provided.");
-
-                        char date_buf[64] = {0};
-                        if (r_updated != nullptr) {
-                            gitstat_time_format_iso_to_date(r_updated, date_buf, sizeof(date_buf));
-                        }
-                        out_stats->contributed_repos[i].updated_at = gitstat_strdup(date_buf);
-                        out_stats->contributed_repos[i].url = gitstat_strdup(r_url ? r_url : "");
-                    }
-                }
-            }
-        }
+        parse_contributed_repos(contrib, repo_limit, out_stats);
     }
 
     json_value_t *repos = json_object_get(user, "repositories");
@@ -388,7 +437,7 @@ static gitstat_error_t github_fetch_stats(const gitstat_provider_t *self, const 
     gitstat_buffer_free(&payload);
 
     if (err == GITSTAT_OK && res.status_code == 200 && res.body.data != nullptr) {
-        err = parse_github_graphql_response(res.body.data, out_stats);
+        err = parse_github_graphql_response(res.body.data, cfg->repo_limit, out_stats);
         if (err == GITSTAT_OK) {
             gitstat_http_response_free(&res);
             gitstat_free(token);
